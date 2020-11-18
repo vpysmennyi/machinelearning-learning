@@ -28,9 +28,9 @@ Xn = np.array(Xn)
 Yn = np.array(Yn)
 Yn = Yn[:, None]
 
-a = 9e-7  #learning rate
+a = 9e-7  # learning rate
 b = np.random.rand(Xn.shape[1],1)/1e5
-step = 0.002
+step = 0.002 # threshold step for PR curve
 threshold = 0
 recalls = []
 precisions = []
@@ -42,6 +42,7 @@ for i in range(10):
   sigmoid = 1/(1 + np.exp(-z))
   gradb = (Yn - sigmoid).T @ Xn
   b = b + a * gradb.T
+  print(b.shape)
 
 # checking recall/precision for thresholds increased by defined step in range from 0 to 1
 for k in range(int(divmod(1,step)[0])):
@@ -61,12 +62,9 @@ for k in range(int(divmod(1,step)[0])):
 
     try:
         precision = len(tp)/(len(tp) + len(fp))
+        recall = len(tp) / (len(tp) + len(fn))
     except (ZeroDivisionError):
         precision = None
-
-    try:
-        recall = len(tp)/(len(tp) + len(fn))
-    except (ZeroDivisionError):
         recall = None
 
     recalls.append(recall)
