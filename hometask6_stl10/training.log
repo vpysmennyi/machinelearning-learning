@@ -1,0 +1,34 @@
+Files already downloaded and verified
+tensor([0.4467, 0.4398, 0.4066]) tensor([0.2603, 0.2566, 0.2713])
+Files already downloaded and verified
+Files already downloaded and verified
+ TRAIN | Epoch 0 - Loss: 0.421804
+ TRAIN | Epoch 1 - Loss: 0.150458
+ TRAIN | Epoch 2 - Loss: 0.073776
+ TRAIN | Epoch 3 - Loss: 0.055085
+ TRAIN | Epoch 4 - Loss: 0.050244
+ TRAIN | Epoch 5 - Loss: 0.048627
+ TRAIN | Epoch 6 - Loss: 0.047358
+ TRAIN | Epoch 7 - Loss: 0.046340
+ TRAIN | Epoch 8 - Loss: 0.045543
+ TRAIN | Epoch 9 - Loss: 0.044680
+ TRAIN | Epoch 10 - Loss: 0.044073
+ TRAIN | Epoch 11 - Loss: 0.043628
+ TRAIN | Epoch 12 - Loss: 0.043067
+ TRAIN | Epoch 13 - Loss: 0.042487
+ TRAIN | Epoch 14 - Loss: 0.042243
+ TRAIN | Epoch 15 - Loss: 0.041777
+ TRAIN | Epoch 16 - Loss: 0.041316
+ TRAIN | Epoch 17 - Loss: 0.041052
+ TRAIN | Epoch 18 - Loss: 0.040541
+ TRAIN | Epoch 19 - Loss: 0.040820
+ TRAIN | Epoch 20 - Loss: 0.040182
+ TRAIN | Epoch 21 - Loss: 0.040320
+ TRAIN | Epoch 22 - Loss: 0.040079
+ TRAIN | Epoch 23 - Loss: 0.040036
+ TRAIN | Epoch 24 - Loss: 0.039872
+ TRAIN | Epoch 25 - Loss: 0.039417
+ TRAIN | Epoch 26 - Loss: 0.038981
+ TRAIN | Epoch 27 - Loss: 0.039011
+ TRAIN | Epoch 28 - Loss: 0.039106
+ TRAIN | Epoch 29 - Loss: 0.038978
