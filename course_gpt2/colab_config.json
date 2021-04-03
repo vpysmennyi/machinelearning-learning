@@ -1,0 +1,18 @@
+{
+  "encoding_max_length":490,
+  "datafile" : "drive/MyDrive/ArxivDS/arxiv-abstracts.json",
+  "save_dir": "model_save/",
+  "num_tpu_cores" : 1,
+  "decode_top_k" : 50,
+  "decode_max_length" : 200,
+  "decode_top_p" : 0.92,
+  "decode_num_test_samples" : 3,
+  "train_batch_size" : 4,
+  "train_size_percent" : 90,
+  "num_epochs" : 5,
+  "lr" : 0.0005,
+  "warmup_steps" : 100,
+  "epsilon" : 0.00000001,
+  "mid_sample_enable" : false,
+  "sample_every_steps" : 100
+}
