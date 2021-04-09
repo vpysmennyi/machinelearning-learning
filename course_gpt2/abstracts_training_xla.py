@@ -1,15 +1,13 @@
+import os
 import time
 import datetime
 import json
 
-import seaborn as sns
 import pandas as pd
-import nltk
 import numpy as np
 import random
 
 import torch
-from torch import nn
 
 import torch_xla
 import torch_xla.debug.metrics as met
@@ -21,7 +19,7 @@ import torch_xla.distributed.xla_multiprocessing as xmp
 import torch_xla.test.test_utils as test_utils
 
 from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler, random_split
+from torch.utils.data import DataLoader, Dataset, random_split
 
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, GPT2Config
 from transformers import AdamW, get_linear_schedule_with_warmup
@@ -53,11 +51,11 @@ class ArxivAbstractGen():
     def __init__(self, model, tokenizer):
         self.model = model
         self.tokenizer = tokenizer
-
+        
         self.dataset = ArxivDataset(abstracts, tokenizer, max_length=config['encoding_max_length'])
 
         self.epochs = config['num_epochs']
-        self.learning_rate = config['lr'] * xm.xrt_world_size()
+        self.learning_rate = config['lr'] 
         self.warmup_steps = config['warmup_steps']
         self.epsilon = config['epsilon']
         self.batch_size = config['train_batch_size']
@@ -89,13 +87,14 @@ class ArxivAbstractGen():
         val_dl = DataLoader(val_ds,
                             sampler=_get_distributed_sampler(val_ds, shuffle=False),
                             batch_size=self.batch_size)
-
+        
         return train_dl, val_dl
 
     def model_save(self):
         xm.master_print('saving the model')
+        self.model.to('cpu')
         model_to_save = self.model.module if hasattr(self.model,
-                                                     'module') else self.model  # Take care of distributed/parallel training
+                                                'module') else self.model  # Take care of distributed/parallel training
         model_to_save.save_pretrained(config['save_dir'])
         tokenizer.save_pretrained(config['save_dir'])
         xm.master_print('saved')
@@ -109,17 +108,18 @@ class ArxivAbstractGen():
 
     def generate_sample(self, top_k=50, max_l=200, top_p=0.92, num_seq=1):
         xm.master_print('Generating sample:')
+        xm.rendezvous('generate smpl')
         # moving to cpu for generation
         self.model.to('cpu')
         sample_output = self.model.generate(bos_token_id=random.randint(1, 30000),
-                                            do_sample=True,
-                                            top_k=top_k,
-                                            max_length=max_l,
-                                            top_p=top_p,
-                                            num_return_sequences=num_seq)
+                                       do_sample=True,
+                                       top_k=top_k,
+                                       max_length=max_l,
+                                       top_p=top_p,
+                                       num_return_sequences=num_seq)
         for i, sample in enumerate(sample_output):
             xm.master_print(f'{i} : {self.tokenizer.decode(sample, skip_special_tokens=True)}')
-
+        
     def run_training(self, tpu_dev):
 
         # get data loader sets
@@ -127,12 +127,14 @@ class ArxivAbstractGen():
 
         self.model.to(tpu_dev)
 
-        opt = AdamW(self.model.parameters(), lr=self.learning_rate, eps=self.epsilon)
+        opt = AdamW(self.model.parameters(), 
+                    lr=self.learning_rate * xm.xrt_world_size(), 
+                    eps=self.epsilon)
 
         total_steps = int(self.train_ds_len / self.batch_size / xm.xrt_world_size() * self.epochs)
 
-        scheduler = get_linear_schedule_with_warmup(opt,
-                                                    num_warmup_steps=self.warmup_steps,
+        scheduler = get_linear_schedule_with_warmup(opt, 
+                                                    num_warmup_steps=self.warmup_steps, 
                                                     num_training_steps=total_steps)
 
         t0 = time.time()
@@ -142,15 +144,12 @@ class ArxivAbstractGen():
 
         for epoch in range(self.epochs):
             t0_epoch = time.time()
-
+            
             p_train_dl = pl.ParallelLoader(train_dl, [tpu_dev])
             p_val_dl = pl.ParallelLoader(val_dl, [tpu_dev])
 
-            # devices = xm.get_xla_supported_devices(max_devices=config['num_tpu_cores'])
-            # model = dp.DataParallel(self.model, device_ids=devices)
-
-            val_epoch_loss = 0
-            epoch_loss = 0
+            val_epoch_loss = []
+            epoch_loss = []
 
             ############ TRAINING
             self.model.train()
@@ -163,35 +162,22 @@ class ArxivAbstractGen():
                 b_att_mask = batch[1].to(tpu_dev)
 
                 output = self.model(b_input_ids,
-                                    labels=b_labels,
-                                    attention_mask=b_att_mask,
-                                    token_type_ids=None)
+                               labels=b_labels,
+                               attention_mask=b_att_mask,
+                               token_type_ids=None)
 
                 loss = output[0]
-                epoch_loss += loss.item()
-
-                if step % 10 == 0:
-                    xm.master_print(f'Step: {step}')
-
-                '''if config['mid_sample_enable']:
-                    if step % config['sample_every_steps'] == 0 and step > 0:
-                        model.eval()
-
-                        generate_sample(model, tokenizer, config['decode_top_k'], config['decode_max_length'],
-                                        config['decode_top_p'])
-                        # moving back to tpu to proceed with training
-                        model.to(tpu_dev)
-                        model.train()'''
+                epoch_loss.append(loss.item())
 
                 loss.backward()
 
                 # need to use this for parallelism
                 xm.optimizer_step(opt)
-
+                
                 scheduler.step()
 
             train_time = format_time(time.time() - t0_epoch)
-            epoch_loss = epoch_loss / len(train_dl)
+            epoch_loss = np.array(epoch_loss).mean()
 
             if epoch_loss:
                 xm.master_print(f'TRAIN | Epoch {epoch + 1} : Loss = {epoch_loss}. Elapsed: {train_time}')
@@ -204,21 +190,21 @@ class ArxivAbstractGen():
             val_t0 = time.time()
 
             for val_step, batch in enumerate(p_val_dl.per_device_loader(tpu_dev)):
-                xm.master_print(f'Val step {val_step}')
+                #xm.master_print(f'Val step {val_step}')
                 b_input_ids = batch[0].to(tpu_dev)
                 b_labels = batch[0].to(tpu_dev)
                 b_att_mask = batch[1].to(tpu_dev)
 
                 output = self.model(b_input_ids,
-                                    labels=b_labels,
-                                    attention_mask=b_att_mask,
-                                    token_type_ids=None)
+                               labels=b_labels,
+                               attention_mask=b_att_mask,
+                               token_type_ids=None)
 
                 loss = output[0]
-                val_epoch_loss += loss.item()
+                val_epoch_loss.append(loss.item())
 
             val_time = format_time(time.time() - val_t0)
-            val_epoch_loss = val_epoch_loss / len(val_dl)
+            val_epoch_loss = np.array(val_epoch_loss).mean()
 
             if val_epoch_loss:
                 xm.master_print(f'VAL | Epoch {epoch + 1} : Loss = {val_epoch_loss}. Elapsed: {val_time}')
@@ -236,8 +222,11 @@ class ArxivAbstractGen():
                 }
             )
 
+            xm.save(self.model.state_dict(), './model_save/model_e.pt')
+
         xm.master_print(f'Total elapsed: {format_time(time.time() - t0)}')
         self.print_train_stats(train_stats)
+        xm.rendezvous('leave')
 
 
 def format_time(elapsed):
@@ -249,6 +238,7 @@ def _mp_fn(rank, flags, trainer_obj):
 
     # initializing TPU device
     device = xm.xla_device()
+    xm.rendezvous('init')
     trainer_obj.run_training(device)
 
 
@@ -257,7 +247,6 @@ conf_file = './config.json'
 
 if in_colab:
     from google.colab import drive
-
     drive.mount('/content/drive')
     conf_file = 'drive/MyDrive/ArxivDS/colab_config.json'
 
@@ -266,13 +255,15 @@ with open(conf_file) as f:
 
 print('Execution configuration:')
 for c in config:
-    print(f'{c}' + ' ' * (30 - len(c)) + f'{config[c]}')
+    print(f'{c}' + ' '*(30-len(c)) + f'{config[c]}')
 
-# reading dataset
-df = pd.read_json(config['datafile'], lines=True, nrows=2000)
+os.environ["XRT_TPU_CONFIG"] = "tpu_worker;0;" + config['tpu_ip_address'] + ":8470"
+
+#reading dataset
+df = pd.read_json(config['datafile'], lines=True, nrows=16000)
 abstracts = df.abstract
 
-# loading GPT2
+#loading GPT2
 tokenizer = GPT2Tokenizer.from_pretrained('gpt2', bos_token='<BOS>', eos_token='<EOS>', pad_token='<PAD>')
 gpt2_config = GPT2Config.from_pretrained('gpt2', output_hidden_states=False)
 mdl = GPT2LMHeadModel.from_pretrained('gpt2', config=gpt2_config)
@@ -282,13 +273,12 @@ trainer = ArxivAbstractGen(mdl, tokenizer)
 
 xmp.spawn(_mp_fn, args=(config, trainer), nprocs=config['num_tpu_cores'], start_method='fork')
 
-# generating samples with a tuned model
-trainer.generate_sample(top_k=config['decode_top_k'],
-                        max_l=config['decode_max_length'],
+trainer.model_save()
+
+#generating samples with a tuned model
+trainer.generate_sample(top_k=config['decode_top_k'], 
+                        max_l=config['decode_max_length'], 
                         top_p=config['decode_top_p'],
                         num_seq=config['decode_num_test_samples'])
 
-# saving tuned model
-trainer.model_save()
 
-# export XRT_TPU_CONFIG="tpu_worker;0;$TPU_IP_ADDRESS:8470"

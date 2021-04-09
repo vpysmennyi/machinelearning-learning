@@ -2,7 +2,9 @@ import json
 import re
 
 def build_dataset(ds, dest_file):
-
+    '''
+    Preparing dataset in json format. Also adding specific BOS, EOS tokens
+    '''
     abstracts = []
     id = 0
     for n in ds:
