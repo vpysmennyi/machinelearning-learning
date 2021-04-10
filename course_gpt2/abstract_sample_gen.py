@@ -11,9 +11,9 @@ conf_file = './config.json'
 with open(conf_file) as f:
     config = json.load(f)
 
-tokenizer = GPT2Tokenizer.from_pretrained('./model_save/')
-gpt2_config = GPT2Config.from_pretrained('./model_save/', output_hidden_states=False)
-mdl = GPT2LMHeadModel.from_pretrained('./model_save/', config=gpt2_config)
+tokenizer = GPT2Tokenizer.from_pretrained(config['save_dir'])
+gpt2_config = GPT2Config.from_pretrained(config['save_dir'], output_hidden_states=False)
+mdl = GPT2LMHeadModel.from_pretrained(config['save_dir'], config=gpt2_config)
 
 sample_output = mdl.generate(bos_token_id=random.randint(1, 30000),
                                         do_sample=True,
