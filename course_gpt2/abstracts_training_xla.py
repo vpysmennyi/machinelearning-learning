@@ -16,7 +16,7 @@ import torch_xla.distributed.parallel_loader as pl
 import torch_xla.utils.utils as xu
 import torch_xla.core.xla_model as xm
 import torch_xla.distributed.xla_multiprocessing as xmp
-import torch_xla.test.test_utils as test_utils
+import torch_xla.test.test_utils as test_utilsgrep
 
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader, Dataset, random_split
@@ -52,13 +52,13 @@ class ArxivAbstractGen():
         self.model = model
         self.tokenizer = tokenizer
         
-        self.dataset = ArxivDataset(abstracts, tokenizer, max_length=config['encoding_max_length'])
+        self.dataset = ArxivDataset(abstracts, tokenizer, max_length=CONFIG['encoding_max_length'])
 
-        self.epochs = config['num_epochs']
-        self.learning_rate = config['lr'] 
-        self.warmup_steps = config['warmup_steps']
-        self.epsilon = config['epsilon']
-        self.batch_size = config['train_batch_size']
+        self.epochs = CONFIG['num_epochs']
+        self.learning_rate = CONFIG['lr']
+        self.warmup_steps = CONFIG['warmup_steps']
+        self.epsilon = CONFIG['epsilon']
+        self.batch_size = CONFIG['train_batch_size']
 
         self.train_ds_len = 0
 
@@ -74,7 +74,7 @@ class ArxivAbstractGen():
                 shuffle=shuffle)
             return sampler
 
-        train_size = int(len(ds) * config['train_size_percent'] / 100)
+        train_size = int(len(ds) * CONFIG['train_size_percent'] / 100)
         val_size = len(ds) - train_size
 
         train_ds, val_ds = random_split(ds, [train_size, val_size])
@@ -95,8 +95,8 @@ class ArxivAbstractGen():
         self.model.to('cpu')
         model_to_save = self.model.module if hasattr(self.model,
                                                 'module') else self.model  # Take care of distributed/parallel training
-        model_to_save.save_pretrained(config['save_dir'])
-        tokenizer.save_pretrained(config['save_dir'])
+        model_to_save.save_pretrained(CONFIG['save_dir'])
+        tokenizer.save_pretrained(CONFIG['save_dir'])
         xm.master_print('saved')
 
     def print_train_stats(self, stats):
@@ -222,7 +222,7 @@ class ArxivAbstractGen():
                 }
             )
 
-            xm.save(self.model.state_dict(), './model_save/model_e.pt')
+            xm.save(self.model.state_dict(), CONFIG['save_dir'] + 'model_e.pt')
 
         xm.master_print(f'Total elapsed: {format_time(time.time() - t0)}')
         self.print_train_stats(train_stats)
@@ -251,16 +251,18 @@ if in_colab:
     conf_file = 'drive/MyDrive/ArxivDS/colab_config.json'
 
 with open(conf_file) as f:
-    config = json.load(f)
+    CONFIG = json.load(f)
 
 print('Execution configuration:')
-for c in config:
-    print(f'{c}' + ' '*(30-len(c)) + f'{config[c]}')
+for c in CONFIG:
+    print(f'{c}' + ' ' * (30-len(c)) + f'{CONFIG[c]}')
 
-os.environ["XRT_TPU_CONFIG"] = "tpu_worker;0;" + config['tpu_ip_address'] + ":8470"
+if not in_colab:
+    # initialize TPU for XLA when running on server
+    os.environ["XRT_TPU_CONFIG"] = "tpu_worker;0;" + CONFIG['tpu_ip_address'] + ":8470"
 
 #reading dataset
-df = pd.read_json(config['datafile'], lines=True, nrows=16000)
+df = pd.read_json(CONFIG['datafile'], lines=True, nrows=80000)
 abstracts = df.abstract
 
 #loading GPT2
@@ -271,14 +273,15 @@ mdl.resize_token_embeddings(len(tokenizer))
 
 trainer = ArxivAbstractGen(mdl, tokenizer)
 
-xmp.spawn(_mp_fn, args=(config, trainer), nprocs=config['num_tpu_cores'], start_method='fork')
+xmp.spawn(_mp_fn, args=(CONFIG, trainer), nprocs=CONFIG['num_tpu_cores'], start_method='fork')
 
 trainer.model_save()
 
 #generating samples with a tuned model
-trainer.generate_sample(top_k=config['decode_top_k'], 
-                        max_l=config['decode_max_length'], 
-                        top_p=config['decode_top_p'],
-                        num_seq=config['decode_num_test_samples'])
+# NOTE! not working here when running on 8 TPU cores
+trainer.generate_sample(top_k=CONFIG['decode_top_k'],
+                        max_l=CONFIG['decode_max_length'],
+                        top_p=CONFIG['decode_top_p'],
+                        num_seq=CONFIG['decode_num_test_samples'])
 
 

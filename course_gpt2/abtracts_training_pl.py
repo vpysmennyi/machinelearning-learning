@@ -4,14 +4,16 @@ import numpy as np
 import random
 import torch
 import pytorch_lightning as pyl
+
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler, random_split
 
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, GPT2Config
 from transformers import AdamW, get_cosine_schedule_with_warmup
+from pytorch_lightning.loggers.neptune import NeptuneLogger
 
-# set this to True when running in google colab
+
+# set to True when running in google colab
 in_colab = False
-
 random.seed(42)
 
 
@@ -44,10 +46,10 @@ class ArxivAbstractGen(pyl.LightningModule):
         self.model = GPT2LMHeadModel.from_pretrained('gpt2', config=gpt2_config)
         self.model.resize_token_embeddings(len(self.tokenizer))
 
-        self.epochs = config['num_epochs']
-        self.learning_rate = config['lr']
-        self.epsilon = config['epsilon']
-        self.batch_size = config['train_batch_size']
+        self.epochs = CONFIG['num_epochs']
+        self.learning_rate = CONFIG['lr']
+        self.epsilon = CONFIG['epsilon']
+        self.batch_size = CONFIG['train_batch_size']
 
         self.train_ds_len = 0
 
@@ -69,14 +71,14 @@ class ArxivAbstractGen(pyl.LightningModule):
         return output
 
     def configure_optimizers(self):
-        train_steps = int((self.train_ds_len / self.batch_size / config['num_tpu_cores']) * self.epochs)
+        train_steps = int((self.train_ds_len / self.batch_size / CONFIG['num_tpu_cores']) * self.epochs)
 
         opt = AdamW(self.model.parameters(),
                     lr=self.learning_rate,
                     eps=self.epsilon)
 
         sched = {'scheduler': get_cosine_schedule_with_warmup(opt,
-                                                              num_warmup_steps=config['warmup_steps'],
+                                                              num_warmup_steps=CONFIG['warmup_steps'],
                                                               num_training_steps=train_steps),
                  'interval': 'step'
                  }
@@ -97,17 +99,11 @@ class ArxivAbstractGen(pyl.LightningModule):
         return loss
 
     def training_epoch_end(self, outputs):
-        # calculate average training loss for epoch
         te_loss = np.array(self.train_loss).mean()
-        d = {'train_loss': te_loss}
+        d = {'epoch': self.current_epoch, 'train_loss': te_loss}
 
-        # updating stats
-        if len(self.total_stats) == self.current_epoch:
-            self.total_stats.append(d)
-        else:
-            self.total_stats[self.current_epoch].update(d)
-
-        self.print(f'Epoch {self.current_epoch}, train_loss: {te_loss}')
+        self.total_stats.append(d)
+        self.print(f'  Epoch {self.current_epoch}, train_loss: {te_loss}')
 
     def validation_step(self, batch, index):
         b_input_ids = batch[0]
@@ -120,43 +116,36 @@ class ArxivAbstractGen(pyl.LightningModule):
 
         loss = output[0]
         self.val_loss.append(loss.item())
-        # self.log('val_loss', loss.item(), logger=True)
+        #self.log('val_loss', loss.item(), logger=True)
         return loss
 
     def validation_epoch_end(self, outputs):
-        # calculating validation loss on epoch
         ve_loss = np.array(self.val_loss).mean()
-        d = {'val_loss': ve_loss}
+        d = {'epoch': self.current_epoch, 'val_loss': ve_loss}
 
-        # updating stats
-        if len(self.total_stats) == self.current_epoch:
-            self.total_stats.append(d)
-        else:
-            self.total_stats[self.current_epoch].update(d)
-
-        self.print(f'Epoch {self.current_epoch}, val_loss: {ve_loss}')
+        self.total_stats.append(d)
+        self.print(f'  Epoch {self.current_epoch}, val_loss: {ve_loss}')
 
     def model_save(self):
         model_to_save = self.model.module if hasattr(self.model,
-                                                     'module') else self.model  # Take care of distributed/parallel training
-        model_to_save.save_pretrained(config['save_dir'])
-        self.tokenizer.save_pretrained(config['save_dir'])
+                                                     'module') else self.model
+        model_to_save.save_pretrained(CONFIG['save_dir'])
+        self.tokenizer.save_pretrained(CONFIG['save_dir'])
         self.print('model saved')
 
 
 def prepare_data_loader(ds):
-    # dividing dataset to train and validation datasets with a given distribution scale
-    train_size = int(len(ds) * config['train_size_percent'] / 100)
+    train_size = int(len(ds) * CONFIG['train_size_percent'] / 100)
     val_size = len(ds) - train_size
 
     train_ds, val_ds = random_split(ds, [train_size, val_size])
 
     train_dl = DataLoader(train_ds,
                           sampler=RandomSampler(train_ds),
-                          batch_size=config['train_batch_size'], num_workers=config['data_loader_workers'])
+                          batch_size=CONFIG['train_batch_size'], num_workers=6)
     val_dl = DataLoader(val_ds,
                         sampler=SequentialSampler(val_ds),
-                        batch_size=config['train_batch_size'], num_workers=config['data_loader_workers'])
+                        batch_size=CONFIG['train_batch_size'], num_workers=6)
     return train_dl, val_dl, len(train_ds)
 
 
@@ -178,35 +167,31 @@ def generate_sample(model, tokenizer, top_k=50, max_l=200, top_p=0.92, num_seq=1
 # reading config
 conf_file = './config.json'
 
-# define specific path for config file, when running in colab
 if in_colab:
     from google.colab import drive
 
     drive.mount('/content/drive')
     conf_file = 'drive/MyDrive/ArxivDS/colab_config.json'
 
-# loading training config
 with open(conf_file) as f:
-    config = json.load(f)
+    CONFIG = json.load(f)
 
-# printing config
 print('Execution configuration:')
-for c in config:
-    print(f'{c}' + ' ' * (30 - len(c)) + f'{config[c]}')
+for c in CONFIG:
+    print(f'{c}' + ' ' * (30 - len(c)) + f'{CONFIG[c]}')
 
-# reading dataset from file
-df = pd.read_json(config['datafile'], lines=True)
+# reading dataset
+df = pd.read_json(CONFIG['datafile'], lines=True, nrows=1000000)
 abstracts = df.abstract
 
 lit_model = ArxivAbstractGen()
 
-#preparing dataset
-dataset = ArxivDataset(abstracts, lit_model.get_tokenizer(), max_length=config['encoding_max_length'])
+dataset = ArxivDataset(abstracts, lit_model.get_tokenizer(), max_length=CONFIG['encoding_max_length'])
 
 train_dl, val_dl, len_train_ds = prepare_data_loader(dataset)
 lit_model.train_ds_len = len_train_ds
 
-trainer = pyl.Trainer(tpu_cores=config['num_tpu_cores'], max_epochs=config['num_epochs'])
+trainer = pyl.Trainer(tpu_cores=CONFIG['num_tpu_cores'], max_epochs=CONFIG['num_epochs'])
 
 trainer.fit(lit_model, train_dl, val_dl)
 
@@ -215,8 +200,7 @@ lit_model.model_save()
 print(lit_model.total_stats)
 
 generate_sample(lit_model.get_model(), lit_model.get_tokenizer(),
-                top_k=config['decode_top_k'],
-                max_l=config['decode_max_length'],
-                top_p=config['decode_top_p'],
-                num_seq=config['decode_num_test_samples'])
-
+                top_k=CONFIG['decode_top_k'],
+                max_l=CONFIG['decode_max_length'],
+                top_p=CONFIG['decode_top_p'],
+                num_seq=CONFIG['decode_num_test_samples'])

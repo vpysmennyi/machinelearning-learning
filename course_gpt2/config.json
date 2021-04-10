@@ -1,8 +1,9 @@
 {
-  "encoding_max_length":490,
+  "tpu_ip_address": "0.0.0.0",
+  "encoding_max_length":256,
   "datafile" : "data/arxiv-abstracts.json",
   "save_dir": "model_save/",
-  "num_tpu_cores" : 1,
+  "num_tpu_cores" : 8,
   "decode_top_k" : 50,
   "decode_max_length" : 200,
   "decode_top_p" : 0.92,
@@ -13,5 +14,5 @@
   "lr" : 0.0005,
   "warmup_steps" : 100,
   "epsilon" : 0.00000001,
-  "data_loader_workers" : 16
+  "data_loader_workers" : 6
 }
